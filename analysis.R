@@ -227,3 +227,22 @@ gt_tbl <- d |>
 
 # Show the gt table
 gt_tbl
+
+
+#################################
+# Poverty data
+#################################
+pov_url <- 'https://www2.census.gov/programs-surveys/saipe/datasets/2022/2022-state-and-county/est22all.xls'
+pov <- rio::import(file = pov_url)
+pov <- tail(pov, -2) %>%
+  janitor::row_to_names(row_number = 1)
+pov$FIPS <- paste0(pov$`State FIPS Code`, pov$`County FIPS Code`)
+pov <- data.frame(pov) %>%
+  filter(County.FIPS.Code != '000') %>%
+  mutate(poverty_rate = as.numeric(Poverty.Percent..All.Ages)) %>%
+  select(FIPS, poverty_rate) %>%
+  rename(fips = FIPS)
+
+pov_sf <- counties %>%
+  merge(pov, by = 'fips') %>%
+  st_transform(4326)
