@@ -7,6 +7,7 @@ library(tidyr)
 library(lubridate)
 library(ggplot2)
 library(scales)
+library(gt)
 
 conn <- dbConnect(odbc::odbc(),
                   dsn = 'impala-prod')
@@ -107,3 +108,122 @@ g <- ggplot(app_data, aes(x = application_year, y = recommended_federal_amount))
   xlab("")
 
 g
+
+############################
+# Community Wealth data
+############################
+comm_wealth_url <- 'https://raw.githubusercontent.com/CSU-Local-and-Regional-Food-Systems/USDA-AMS-Data-and-Metrics/main/Indicators%20of%20Community%20Wealth/community_wealth.csv'
+comm_wealth_all <- read.csv(comm_wealth_url) %>%
+  filter(fips > 100) %>%
+  filter(!county_name %in% c('Menominee County', 'Kidder County'))# remove national level rows 
+
+# Function to add leading 0 to 4-digit fips values in comm_wealth to facilitate later joins
+add_leading_zero <- function(x) {
+  # Check if the number has 4 digits
+  ifelse(nchar(x) == 4, paste0("0", x), x)
+}
+
+# apply funcion to fips column
+comm_wealth_all$fips <- sapply(comm_wealth_all$fips, add_leading_zero)
+
+comm_wealth_all <- comm_wealth_all %>%
+  filter(variable_name != 'broad_11')
+
+
+vars <- unique(comm_wealth_all$variable_name)
+
+# cats <- list()
+# for (var in vars) {
+#   my_cat <- comm_wealth_all$category[match(var, comm_wealth_all$variable_name)]
+#   cats <- append(cats, my_cat)
+# }
+# cats <- unlist(cats)
+
+descriptions_csv <- read.csv('data/metadata_all_files.csv')
+
+descriptions <- list()
+for (var in vars) {
+  my_desc <- descriptions_csv$variable_definition[match(var, descriptions_csv$variable_name)]
+  descriptions <- append(descriptions, my_desc)
+}
+descriptions <- unlist(descriptions)
+
+cats <- list()
+for (var in vars) {
+  my_cat <- descriptions_csv$category[match(var, descriptions_csv$variable_name)]
+  cats <- append(cats, my_cat)
+}
+cats <- unlist(cats)
+
+sources <- list()
+for (var in vars) {
+  my_source <- descriptions_csv$source[match(var, descriptions_csv$variable_name)]
+  sources <- append(sources, my_source)
+}
+sources <- unlist(sources)
+
+d <- data.frame(
+  list(
+    'variable' = vars,
+    'category' = cats,
+    'description' = descriptions,
+    'source' = sources
+  )
+)
+
+gt_tbl <- d |>
+  mutate(category = replace_na(category, "Uncategorized")) |>
+  group_by(category) |>
+  gt(rowname_col = "variable") %>%
+  cols_hide('category') %>%
+  # tab_header(
+  #   title = "Indicators of community wealth variables",
+  #   subtitle = "Descriptions and sources of data used in analysis"
+  # ) |>
+  tab_row_group(
+    label = html("<strong>Community Characteristics</strong>"),
+    rows = category == 'Community Characteristics'
+  ) |>
+  tab_row_group(
+    label = html("<strong>Processing & Distribution</strong>"),
+    rows = category == 'Processing & Distribution'
+  ) |>
+  tab_row_group(
+    label = html("<strong>Food Access</strong>"),
+    rows = category == 'Food Access'
+  ) |>
+  tab_row_group(
+    label = html("<strong>Institutions</strong>"),
+    rows = category == 'Institutions'
+  ) |>
+  tab_row_group(
+    label = html("<strong>Labor</strong>"),
+    rows = category == 'Labor'
+  ) |>
+  tab_row_group(
+    label = html("<strong>Demographics</strong>"),
+    rows = category == 'Demographics'
+  ) |>
+  cols_label(
+    description = "Description",
+    source = "Data Source"
+  ) |>
+  tab_style(
+    style = list(
+      cell_fill("grey90"),
+      cell_text(color = "black", weight = "bold")
+    ),
+    locations = cells_row_groups()
+  ) |>
+  tab_options(row.striping.include_table_body = FALSE) |>
+  opt_row_striping(row_striping = FALSE) |>
+  opt_table_font(
+    font = google_font("Roboto")) |>
+  tab_options(
+    table.font.size = 12
+  ) |>
+  tab_options(quarto.disable_processing = TRUE)
+
+
+# Show the gt table
+gt_tbl
