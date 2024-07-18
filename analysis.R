@@ -8,6 +8,11 @@ library(lubridate)
 library(ggplot2)
 library(scales)
 library(gt)
+library(tidyUSDA)
+library(units)
+
+#census_api_key <- Sys.getenv("CENSUS_API_KEY")
+ag_census_api_key <- Sys.getenv("AG_CENSUS_API_KEY")
 
 conn <- dbConnect(odbc::odbc(),
                   dsn = 'impala-prod')
@@ -245,4 +250,56 @@ pov <- data.frame(pov) %>%
 
 pov_sf <- counties %>%
   merge(pov, by = 'fips') %>%
+  st_transform(4326)
+
+
+##################################
+# Farmland proportion stuff
+##################################
+cropland_acres_df <- getQuickstat(
+  key = ag_census_api_key,
+  program = "CENSUS",
+  data_item = "AG LAND, CROPLAND - ACRES",
+  geographic_level = "COUNTY",
+  domain = "TOTAL",
+  year = "2022",
+  geometry = TRUE,
+  lower48 = TRUE) %>%
+  select(GEOID, NAMELSAD, Value) %>%
+  rename(cropland_acres = Value)
+
+pasture_acres_df <- getQuickstat(
+  key = ag_census_api_key,
+  program = "CENSUS",
+  data_item = "AG LAND, PASTURELAND - ACRES",
+  geographic_level = "COUNTY",
+  domain = "TOTAL",
+  year = "2022",
+  geometry = TRUE,
+  lower48 = TRUE) %>%
+  st_drop_geometry() %>%
+  select(GEOID, Value) %>%
+  rename(pasture_acres = Value)
+
+ag_acres_df <- cropland_acres_df %>%
+  mutate(area_meters = st_area(cropland_acres_df),
+         county_acres = area_meters * 0.000247105) %>%
+  merge(pasture_acres_df, by = 'GEOID') %>%
+  mutate(
+    ag_acres = cropland_acres + pasture_acres) %>%
+  select(GEOID, NAMELSAD, county_acres, ag_acres)
+
+ag_acres_df$county_acres <- units::set_units(st_area(ag_acres_df), "acre")
+
+ag_land <- ag_acres_df %>%
+  select(GEOID, NAMELSAD, ag_acres, county_acres) %>%
+  drop_na() %>%
+  rename(fips = GEOID) %>%
+  mutate(ag_proportion = round(ag_acres / county_acres * 100), 1) %>%
+  select(fips, ag_proportion) %>%
+  drop_units() %>%
+  st_drop_geometry() # geoms are wonky from the original soure
+
+ag_land_sf <- counties %>%
+  merge(ag_land, by = 'fips') %>%
   st_transform(4326)
